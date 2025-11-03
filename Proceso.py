@@ -4,12 +4,16 @@ class Proceso:
         self.arribo = arribo
         self.duracion = duracion
         self.tamano = tamano
-
+        self.evento=[]
+        self.tamanos=[]
+        self.inicioP=0
+        self.finP=0
     def mostrarInfo(self):
         print("Nombre del proceso: ",self.nombre)
         print("Tiempo de arribo: ",self.arribo)
         print("Duración del proceso: ",self.duracion)
         print("Tamaño del proceso: ",self.tamano)
+        print("---------------------------")
 
     def getNombre(self):                
         return self.nombre
@@ -29,14 +33,14 @@ class Proceso:
         self.nombre = nombre
 
     def setArribo(self, arribo):
-        if not isinstance(arribo, (int, float)):
+        if not isinstance(arribo, (int)):
             raise TypeError("Arribo debe ser un número real")
-        self.arribo = float(arribo)
+        self.arribo = int(arribo)
 
     def setDuracion(self, duracion):
-        if not isinstance(duracion, (int, float)):
+        if not isinstance(duracion, (int)):
             raise TypeError("Duración debe ser un número real")
-        self.duracion = float(duracion)
+        self.duracion = int(duracion)
 
     def setTamano(self, tamano):
         if not isinstance(tamano, int):
@@ -44,11 +48,32 @@ class Proceso:
         self.tamano = tamano
 
 
-    def cargarProceso(self, nombre, arribo, duracion, tamano):
-        self.setNombre(nombre)
-        self.setArribo(arribo)
-        self.setDuracion(duracion)
-        self.setTamano(tamano)
-        return self 
+    def cargarEvento(self,inicio,fin,tipo):
+        self.evento.append((inicio,fin,tipo))
+        pass
     
-    
+    def cargarTamano(self,ini,fini):
+        self.inicioP=ini 
+        self.finP=fini  
+
+
+        
+
+
+    def cargarProceso(self, nombre, arribo, duracion, tamano,cantidadProcesos):
+        try:
+            arribo = int(arribo)
+            duracion = int(duracion)
+            tamano = int(tamano)
+            self.setNombre(nombre)
+            self.setArribo(arribo)
+            self.setDuracion(duracion)
+            self.setTamano(tamano)
+
+            print("Proceso cargado exitosamente:")
+            self.mostrarInfo()
+            return self 
+        except ValueError as e:
+            print("Error al cargar el proceso:", e)
+            return None
+
