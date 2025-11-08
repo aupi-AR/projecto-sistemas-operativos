@@ -1,44 +1,182 @@
-import Particion
-import Estrategia
-import FirstFit
-import BestFit
-import NextFit
-import WorstFit
-from Proceso import Proceso
+from Particion import Particion
+from Proceso import proceso
+from Estrategia import Estrategia
+import json
+from datetime import datetime
+from pathlib import Path
+import tempfile
+
 class Memoria:
-    def __init__(self, tamano, estrategia, tiempoSeleccion, PromedioCarga, TiempoLiberacion, procesos):
+    def __init__(self, tamano:int, estrategia:Estrategia, tiempoSeleccion:int, PromedioCarga:int, TiempoLiberacion:int, procesos:list[proceso]):
         self.tamano = tamano
-        self.setEstrategia(estrategia)
+        self.estrategia = estrategia
         self.tiempoSeleccion = tiempoSeleccion
         self.PromedioCarga = PromedioCarga
         self.TiempoLiberacion = TiempoLiberacion
-        self.estado = "libre"  
-        self.particiones = [Particion.Particion("p0", None, self.tamano, 0, self.tamano)]
-        
-        
-
-        self.procesos = []
-        for p in procesos:
-            proceso = Proceso(
-                p["nombre"],          
-                p["tiempo_arribo"],    
-                p["duracion"],         
-                p["memoria_requerida"] 
-            )
-            self.procesos.append(proceso)
-        
+        self.particiones: list[Particion] = []
+        self.procesos = procesos
         # Ordenar por tiempo de arribo
         self.procesos.sort(key=lambda x: x.getArribo())
+        self.vof=False
+        # Crear partición inicial
+        particion_inicial = Particion(
+            nombre=0,
+            tamano=self.tamano,
+            inicio=0,
+            fin=self.tamano-1,
+            proceso=None
+        )
+        self.particiones.append(particion_inicial)
         
         # Atributos que uso en la simulación
         self.nroParticion = 1
         self.procesosTerminados = []
         self.fragmentacion = 0
         self.tiempo = 0
-        self.ultimaParticion = 0  # Cambiar de -1 a 0
-        self.ready = []
-        self.finalizando = []
-   
+        self.tiempos= []
+        
+        # NUEVO: Listas para almacenar eventos y estados
+        self.eventos = []
+        self.estados_particiones = []
+        
+        # Registrar estado inicial
+        self.registrarEstadoParticiones("Inicialización del sistema")
+
+    def registrarEvento(self, tipo_evento: str, descripcion: str, proceso_nombre: str = None, particion_id: int = None):
+        """
+        Registra un evento en el sistema.
+        
+        Args:
+            tipo_evento: Tipo de evento (ej: "SELECCION", "CARGA", "FINALIZACION", "PARTICION_CREADA", "PARTICIONES_UNIDAS")
+            descripcion: Descripción detallada del evento
+            proceso_nombre: Nombre del proceso involucrado (opcional)
+            particion_id: ID de la partición involucrada (opcional)
+        """
+        evento = {
+            "tiempo": self.tiempo,
+            "tipo": tipo_evento,
+            "descripcion": descripcion,
+            "proceso": proceso_nombre,
+            "particion": particion_id
+        }
+        self.eventos.append(evento)
+        print(f"[T={self.tiempo}] {tipo_evento}: {descripcion}")
+
+    def registrarEstadoParticiones(self, motivo: str):
+        """
+        Guarda una instantánea del estado actual de todas las particiones.
+        
+        Args:
+            motivo: Razón por la cual se registra este estado
+        """
+        estado = {
+            "tiempo": self.tiempo,
+            "motivo": motivo,
+            "particiones": []
+        }
+        
+        for particion in self.particiones:
+            info_particion = {
+                "id": particion.nombre,
+                "direccion_inicio": particion.inicio,
+                "direccion_fin": particion.fin,
+                "tamano": particion.tamano,
+                "estado": particion.estado,
+                "proceso": particion.proceso.nombre if particion.proceso else None,
+                "tiempo_liberacion": particion.tiempoLiberacion if particion.estado == "ocupado" else None
+            }
+            estado["particiones"].append(info_particion)
+        
+        self.estados_particiones.append(estado)
+
+    def _obtener_directorio_salida(self) -> Path:
+        """
+        Determina un directorio donde se permita escribir, aún dentro de un .app.
+        Prioriza ~/SimuladorMemoria y cae a temporales si fuese necesario.
+        """
+        destinos = [
+            Path.home() / "SimuladorMemoria",
+            Path.cwd(),
+            Path(tempfile.gettempdir()) / "SimuladorMemoria",
+        ]
+
+        for destino in destinos:
+            try:
+                destino.mkdir(parents=True, exist_ok=True)
+                if destino.exists() and destino.is_dir():
+                    return destino
+            except OSError:
+                continue
+        # Último recurso: directorio actual sin garantías
+        return Path.cwd()
+
+    def guardarRegistros(self, nombre_archivo: str = "simulacion_memoria"):
+        """
+        Guarda los eventos y estados en archivos.
+        
+        Args:
+            nombre_archivo: Nombre base para los archivos (sin extensión)
+        """
+        directorio_salida = self._obtener_directorio_salida()
+        base_eventos = directorio_salida / f"{nombre_archivo}_eventos.txt"
+        base_estados = directorio_salida / f"{nombre_archivo}_estados.txt"
+        base_json = directorio_salida / f"{nombre_archivo}_completo.json"
+
+        # Guardar eventos
+        with open(base_eventos, "w", encoding="utf-8") as f:
+            f.write("="*80 + "\n")
+            f.write("REGISTRO DE EVENTOS DE LA SIMULACIÓN\n")
+            f.write(f"Generado el: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("="*80 + "\n\n")
+            
+            for evento in self.eventos:
+                f.write(f"Tiempo: {evento['tiempo']}\n")
+                f.write(f"Tipo: {evento['tipo']}\n")
+                f.write(f"Descripción: {evento['descripcion']}\n")
+                if evento['proceso']:
+                    f.write(f"Proceso: {evento['proceso']}\n")
+                if evento['particion'] is not None:
+                    f.write(f"Partición: {evento['particion']}\n")
+                f.write("-"*80 + "\n")
+        
+        # Guardar estados de particiones
+        with open(base_estados, "w", encoding="utf-8") as f:
+            f.write("="*80 + "\n")
+            f.write("ESTADOS DE LA TABLA DE PARTICIONES\n")
+            f.write(f"Generado el: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("="*80 + "\n\n")
+            
+            for estado in self.estados_particiones:
+                f.write(f"\nTiempo: {estado['tiempo']}\n")
+                f.write(f"Motivo: {estado['motivo']}\n")
+                f.write("-"*80 + "\n")
+                f.write(f"{'ID':<5} {'Inicio':<10} {'Fin':<10} {'Tamaño':<10} {'Estado':<12} {'Proceso':<15} {'T.Lib':<10}\n")
+                f.write("-"*80 + "\n")
+                
+                for part in estado['particiones']:
+                    t_lib = str(part['tiempo_liberacion']) if part['tiempo_liberacion'] else "-"
+                    proceso_str = part['proceso'] if part['proceso'] else "-"
+                    f.write(f"{part['id']:<5} {part['direccion_inicio']:<10} {part['direccion_fin']:<10} "
+                           f"{part['tamano']:<10} {part['estado']:<12} {proceso_str:<15} {t_lib:<10}\n")
+                f.write("="*80 + "\n")
+        
+        # Guardar versión JSON para facilitar procesamiento posterior
+        with open(base_json, "w", encoding="utf-8") as f:
+            datos = {
+                "eventos": self.eventos,
+                "estados_particiones": self.estados_particiones,
+                "estadisticas": {
+                    "tiempo_total": self.tiempo,
+                    "procesos_terminados": len(self.procesosTerminados),
+                    "fragmentacion_total": self.fragmentacion
+                }
+            }
+            json.dump(datos, f, indent=2, ensure_ascii=False)
+        
+        print(f"\nRegistros guardados en:")
+        print(f"  - {base_eventos}")
+        print(f"  - {base_estados}")
+        print(f"  - {base_json}")
 
     def mostrarInfo(self):
         print("Tamaño de la memoria: ",self.tamano)
@@ -47,7 +185,6 @@ class Memoria:
         print("Promedio de carga: ",self.PromedioCarga)
         print("Tiempo de liberación: ",self.TiempoLiberacion)
 
-        
     def getTamano(self):
         return self.tamano  
     
@@ -63,32 +200,12 @@ class Memoria:
     def getTiempoLiberacion(self):  
         return self.TiempoLiberacion
     
-
-    def getEstado(self):
-        return self.estado
-    
     def setTamano(self, tamano):
         if not isinstance(tamano, int):
             raise TypeError("Tamaño debe ser un entero (int)")
         if tamano <= 0:
             raise ValueError("Tamaño debe ser mayor que 0")
         self.tamano = tamano
-
-    def setEstrategia(self, estrategia):
-        if isinstance(estrategia, str):
-            if estrategia == "FirstFit":
-                self.estrategia = FirstFit.FirstFit()
-            elif estrategia == "BestFit":
-                self.estrategia = BestFit.BestFit()
-            elif estrategia == "NextFit":
-                self.estrategia = NextFit.NextFit()
-            elif estrategia == "WorstFit":
-                self.estrategia = WorstFit.WorstFit()
-            else:
-                raise ValueError(f"Estrategia '{estrategia}' no reconocida")
-        else:
-            self.estrategia = estrategia
-
 
     def setTiempoSeleccion(self, tiempoSeleccion):
         if not isinstance(tiempoSeleccion, (int)):
@@ -114,197 +231,232 @@ class Memoria:
             raise ValueError("Tiempo de liberación no puede ser negativo")
         self.TiempoLiberacion = TiempoLiberacion
 
-    def cargarMemoria(self, tamano, estrategia, tiempoSeleccion, PromedioCarga, TiempoLiberacion):
-        try:
-            tamano = int(tamano)
-            tiempoSeleccion = int(tiempoSeleccion)
-            PromedioCarga = int(PromedioCarga)
-            TiempoLiberacion = int(TiempoLiberacion)
+    def buscarParticion(self, proceso_buscado):
+        """
+        Encuentra el índice de la partición que contiene un proceso específico.
+        """
+        for i, particion in enumerate(self.particiones):
+            if particion.proceso is proceso_buscado:
+                return i
+        return -1
 
-            self.setTamano(tamano)
-            self.setEstrategia(estrategia)
-            self.setTiempoSeleccion(tiempoSeleccion)
-            self.setPromedioCarga(PromedioCarga)
-            self.setTiempoLiberacion(TiempoLiberacion)
-            return self
-        except ValueError as ve:
-            print("error de conversión:", ve)
-    
-
-
-    
-
-    def decrementarTiempos(self,):
-        for particion in self.particiones:
-            if particion.proceso is not None and particion.estado == "ejecutando":
-                particion.proceso.duracion -= 1
-                if particion.proceso.duracion <= 0:
-                    particion.estado="finalizando"
-                    if particion not in self.finalizando:
-                        self.finalizando.append(particion)
-               
-                    
-
-
-
-
-
-
-    def asignarParticion(self, proceso, index):
-        # Seguridad: no permitir índices fuera de rango
-        if index < 0 or index >= len(self.particiones):
-            print(f"⚠️ Índice {index} fuera de rango. Particiones disponibles: {len(self.particiones)}")
-            return
-
-        particion = self.particiones[index]
-
-        # Si la partición encaja justo
-        if particion.tamano == proceso.tamano:
-            particion.proceso = proceso
-            particion.estado = "cargando"
-        else:
-            # Calcular el tamaño libre restante
-            tamano_libre = particion.tamano - proceso.tamano
-
-            # Actualizar la partición ocupada
-            particion.proceso = proceso
-            particion.estado = "cargando"
-            particion.fin = particion.inicio + proceso.tamano  # ← corregido
-            particion.tamano = proceso.tamano
-
-            # Crear nueva partición libre solo si sobra espacio
-            if tamano_libre > 0:
-                nueva_inicio = particion.fin
-                nueva_fin = nueva_inicio + tamano_libre
-                nueva_particion = Particion.Particion(
-                    "P" + str(self.nroParticion),
-                    None,
-                    tamano_libre,
-                    nueva_inicio,
-                    nueva_fin
-                )
-                nueva_particion.estado = "libre"
-                self.particiones.insert(index + 1, nueva_particion)
-
-            self.nroParticion += 1
-
-                   
-
-    def unirParticionesLibres(self,):
-        i = 0
-        while i < len(self.particiones) - 1:
-            particion_actual = self.particiones[i]
-            particion_siguiente = self.particiones[i + 1]
-            if particion_actual.estado=="libre"  and particion_siguiente.estado=="libre":
-                particion_actual.tamano += particion_siguiente.tamano
-                particion_actual.fin=particion_actual.fin+particion_siguiente.tamano
-                del self.particiones[i + 1]
-            else:
-                i += 1
-
-
-
-
-
-
-    def ejecutarFinalizacion(self,):
-        while len(self.finalizando) > 0:
-            pop = self.finalizando.pop(0)
-            pop.cargarEvento(self.tiempo, self.tiempo + self.TiempoLiberacion, "finalizando") 
-            
-            for t in range(self.TiempoLiberacion):
-                self.tiempo += 1
-                self.decrementarTiempos()
-                self.calcularFragmentacion()
-            
-            self.procesosTerminados.append(pop.proceso)
-            
-            if pop.proceso in self.ready:
-                self.ready.remove(pop.proceso)
-                print("Se libero la particion", pop.getNombre(), "del proceso:", pop.proceso.getNombre(), "en el tiempo:", self.tiempo)
-            else:
-                print(f"⚠️ Advertencia: Proceso {pop.proceso.getNombre()} no encontrado en ready al momento de liberar.")
-
-            pop.limpiarParticion()
-            self.unirParticionesLibres()
-
-
-
-    def meterEnReady(self,proceso):
+    def unirParticionesLibres(self,particion):
+        indice = self.particiones.index(particion)
+        particiones_unidas = []
         
-        self.ready.append(proceso)
-        self.procesos.remove(proceso)
+        if indice > 0:
+            particionAnterior = self.particiones[indice - 1]
+            if particionAnterior.proceso is None:
+                particiones_unidas.append(particionAnterior.nombre)
+                particionAnterior.fin = particion.fin
+                particionAnterior.tamano += particion.tamano
+                self.particiones.remove(particion)
+                particion = particionAnterior
+                indice -= 1
+                
+        if indice < len(self.particiones) - 1:
+            particionSiguiente = self.particiones[indice + 1]
+            if particionSiguiente.proceso is None:
+                particiones_unidas.append(particionSiguiente.nombre)
+                particion.fin = particionSiguiente.fin
+                particion.tamano += particionSiguiente.tamano
+                self.particiones.remove(particionSiguiente)
         
+        # NUEVO: Registrar unión de particiones
+        if particiones_unidas:
+            self.registrarEvento(
+                "PARTICIONES_UNIDAS",
+                f"Particiones {particiones_unidas} unidas en partición {particion.nombre} (tamaño: {particion.tamano})",
+                particion_id=particion.nombre
+            )
+            self.registrarEstadoParticiones(f"Unión de particiones libres en partición {particion.nombre}")
 
-    def ejecutarCarga(self,proceso):
-        cargado=False
-        while cargado!=True:
-            if len(self.finalizando)==0:
-                    proceso.cargarEvento(self.tiempo,self.tiempo+self.PromedioCarga,"cargando") 
-                    for i in range(self.PromedioCarga):
-                        self.tiempo+=1
-                        self.decrementarTiempos()
-                        self.calcularFragmentacion()
-                    self.meterEnReady(proceso)
-                    proceso.cargarEvento(self.tiempo,self.tiempo+proceso.duracion,"ejecutando")
-                    cargado=True
-            else: 
-                    self.ejecutarFinalizacion()
-                    proceso.cargarEvento(self.tiempo,self.tiempo+self.PromedioCarga)           
-        
-
-    def calcularFragmentacion(self,):
+    def calcularFragmentacion(self,vof):
         frag=0
         if self.procesos:
             for p in self.particiones:
-                if p.estado=="libre":
+                if p.estado!="ocupado" or p.tiempoLiberacion<=self.tiempo:
+                    print("tamano particion=",p.tamano)
+                    print("particion nombre p",p.nombre)
+                    print("finaliza=",p.tiempoLiberacion)
+                    print("tiempo=",self.tiempo)
                     frag+=p.tamano
+                    print("frag en for=",frag)
+                    print("------------------")
+                    
+            self.fragmentacion+=frag
+            print("calculando fragmentacion",self.fragmentacion)
+            print("------------------")
+        elif vof==True:
+            for p in self.particiones:
+                if p.estado!="ocupado" or p.tiempoLiberacion<=self.tiempo:
+                    print("tamano particion=",p.tamano)
+                    print("particion nombre p",p.nombre)
+                    print("finaliza=",p.tiempoLiberacion)
+                    print("tiempo=",self.tiempo)
+                    frag+=p.tamano
+                    print("frag en for=",frag)
+                    print("------------------")
+                    
             self.fragmentacion+=frag
 
+    def FinalizarProcesos(self):
+        for particion in self.particiones:
+            if particion.proceso is not None and particion.proceso.tiempoDeFinalizacion <= self.tiempo and particion.proceso.tiempoDeFinalizacion != 0:
+                particion.estado="finalizando"
+                
+                # NUEVO: Registrar inicio de finalización
+                self.registrarEvento(
+                    "FINALIZACION_INICIO",
+                    f"Iniciando finalización del proceso {particion.proceso.nombre} en partición {particion.nombre}",
+                    proceso_nombre=particion.proceso.nombre,
+                    particion_id=particion.nombre
+                )
+                
+                particion.proceso.cargarEvento(self.tiempo,self.TiempoLiberacion,"finalizacion")
+                
+                for i in range(self.TiempoLiberacion):
+                    self.calcularFragmentacion(self.vof)
+                    self.tiempo +=1
+                
+                proceso_finalizado = particion.proceso.nombre
+                self.procesosTerminados.append(particion.proceso)
+                particion.limpiarParticion()
+                
+                # NUEVO: Registrar finalización completada
+                self.registrarEvento(
+                    "FINALIZACION_COMPLETA",
+                    f"Proceso {proceso_finalizado} finalizado y liberado de partición {particion.nombre}",
+                    proceso_nombre=proceso_finalizado,
+                    particion_id=particion.nombre
+                )
+                self.registrarEstadoParticiones(f"Liberación de partición {particion.nombre} tras finalizar proceso {proceso_finalizado}")
+                
+                self.unirParticionesLibres(particion)
 
-    def simulacion(self,):
-        index=-1
+    def aceptarNuevosProcesos(self):
+        self.FinalizarProcesos()
+        if self.procesos and self.procesos[0].arribo <= self.tiempo:
+            proceso = self.procesos[0]
+            
+            # NUEVO: Registrar intento de asignación
+            self.registrarEvento(
+                "PROCESO_ARRIBO",
+                f"Proceso {proceso.nombre} arribó al sistema (tamaño: {proceso.tamano})",
+                proceso_nombre=proceso.nombre
+            )
+            
+            if self.estrategia.seleccionarParticion(proceso,self.particiones):
+                self.procesos.pop(0)
+                t=self.tiempo
+                if len(self.procesos)==0 and t==self.tiempo:
+                    self.vof=True
+                
+                # Encontrar la partición asignada
+                indice_particion = self.buscarParticion(proceso)
+                particion = self.particiones[indice_particion]
+                
+                # NUEVO: Registrar selección de partición
+                self.registrarEvento(
+                    "SELECCION_PARTICION",
+                    f"Partición {particion.nombre} seleccionada para proceso {proceso.nombre} (estrategia: {self.estrategia.__class__.__name__})",
+                    proceso_nombre=proceso.nombre,
+                    particion_id=particion.nombre
+                )
+                self.registrarEstadoParticiones(f"Partición creada/asignada para proceso {proceso.nombre}")
+                
+                print("cargado en memoria")    
+                proceso.cargarEvento(self.tiempo, self.tiempoSeleccion,"seleccionando")
+                print("fors selec")
+                
+                for i in range(self.tiempoSeleccion):
+                    self.calcularFragmentacion(self.vof)
+                    self.tiempo +=1
 
-        while len(self.ready)>0 or len(self.procesos)>0:
-            proceso_actual = self.procesos[0]
-            if self.getEstado()=="libre" and proceso_actual.getArribo()<=self.tiempo:
-                index,self.ultimaParticion=self.estrategia.indiceParticion(proceso_actual,self.particiones,self.ultimaParticion)
-                if index != -1:
-                    proceso_actual.cargarTamano(self.particiones[index].inicio,self.particiones[index].inicio)
-                    print("DEBUG → tiempo:", self.tiempo, 
-      "proceso:", proceso_actual.getNombre(),
-      "índice:", index,
-      "cantidad particiones:", len(self.particiones))
+                print("frag fors selec=",self.fragmentacion)
 
-                    self.asignarParticion(proceso_actual,index)
-                    print("DEBUG → tiempo:", self.tiempo, 
-      "proceso:", proceso_actual.getNombre(),
-      "índice:", index,
-      "cantidad particiones:", len(self.particiones))
+                # NUEVO: Registrar inicio de carga
+                self.registrarEvento(
+                    "CARGA_INICIO",
+                    f"Iniciando carga del proceso {proceso.nombre} en partición {particion.nombre}",
+                    proceso_nombre=proceso.nombre,
+                    particion_id=particion.nombre
+                )
 
-                    proceso_actual.cargarEvento(self.tiempo,self.tiempo+self.tiempoSeleccion,"seleccion")
-                    for i in range(self.tiempoSeleccion):
-                        self.tiempo+=1
-                        self.decrementarTiempos()
-                        self.calcularFragmentacion()
+                proceso.cargarEvento(self.tiempo, self.PromedioCarga,"cargando") 
+
+                print("fors carg")
+                for i in range(self.PromedioCarga):
+                    self.calcularFragmentacion(self.vof)
+                    self.tiempo +=1
                     
-                        
-                    self.ejecutarCarga(proceso_actual)
-                    self.nroParticion+=1
-        
-                else:
-                    self.tiempo+=1
-                    self.decrementarTiempos()
-                    if len(self.finalizando)>0:
-                        self.ejecutarFinalizacion()
-                        
-                        #memoria.calcularFragmentacion()
-            else:
-                self.tiempo+=1
-                self.decrementarTiempos()
-                if len(self.finalizando)>0:
-                    self.calcularFragmentacion()
-                    self.ejecutarFinalizacion()
-                else:
-                    self.calcularFragmentacion()
+                particion.estado="ocupado"
+                print("frag en carga=",self.fragmentacion)
+                
+                proceso.tiempoDeFinalizacion = self.tiempo+proceso.duracion
+                particion.tiempoLiberacion=self.tiempo+proceso.duracion
+                print("tiempo de liberacion p{particion.nombre}",particion.tiempoLiberacion)
+                
+                # NUEVO: Registrar carga completada e inicio de ejecución
+                self.registrarEvento(
+                    "CARGA_COMPLETA",
+                    f"Proceso {proceso.nombre} cargado en partición {particion.nombre}. Inicio de ejecución",
+                    proceso_nombre=proceso.nombre,
+                    particion_id=particion.nombre
+                )
+                self.registrarEstadoParticiones(f"Proceso {proceso.nombre} en ejecución en partición {particion.nombre}")
+                
+                proceso.cargarEvento(self.tiempo,proceso.duracion,"rafaga")
+                self.vof=False
 
+            else:
+                # NUEVO: Registrar rechazo
+                self.registrarEvento(
+                    "PROCESO_RECHAZADO",
+                    f"No hay partición disponible para proceso {proceso.nombre} (tamaño requerido: {proceso.tamano})",
+                    proceso_nombre=proceso.nombre
+                )
+                print("else dentro de aceptar PROCESOS")
+                self.calcularFragmentacion(self.vof)
+                self.tiempo+=1
+        else: 
+            self.calcularFragmentacion(self.vof)
+            self.tiempo+=1
+    
+    def imprimir(self):
+        for proceso in self.procesos:
+            print(proceso.nombre)
+
+    def imprimir2(self):
+        for particion in self.particiones:
+            if particion.proceso is not None:
+                print(particion.proceso.nombre)
+
+    def simulacion(self):
+        fin = len(self.procesos)
+        
+        # NUEVO: Registrar inicio de simulación
+        self.registrarEvento(
+            "SIMULACION_INICIO",
+            f"Inicio de simulación con {fin} procesos"
+        )
+        
+        while len(self.procesosTerminados) < fin:
+            self.FinalizarProcesos()
+            print("tiempo=",self.tiempo)
+            if self.procesos:
+                print("entre al primer else")
+                self.aceptarNuevosProcesos()
+            else:
+                print("entre al segundo else")
+                self.tiempo += 1
+            self.imprimir()
+        
+        # NUEVO: Registrar fin de simulación
+        self.registrarEvento(
+            "SIMULACION_FIN",
+            f"Simulación completada. Tiempo total: {self.tiempo}. Procesos finalizados: {len(self.procesosTerminados)}"
+        )
+        
+        # NUEVO: Guardar todos los registros
+        self.guardarRegistros()

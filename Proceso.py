@@ -1,13 +1,14 @@
-class Proceso:
+class proceso:
     def __init__(self, nombre, arribo, duracion, tamano):
         self.nombre = nombre
         self.arribo = arribo
+        self.tiempoDeFinalizacion = 0
         self.duracion = duracion
         self.tamano = tamano
-        self.evento=[]
-        self.tamanos=[]
+        self.evento  =[]
         self.inicioP=0
         self.finP=0
+    
     def mostrarInfo(self):
         print("Nombre del proceso: ",self.nombre)
         print("Tiempo de arribo: ",self.arribo)
@@ -48,17 +49,12 @@ class Proceso:
         self.tamano = tamano
 
 
-    def cargarEvento(self,inicio,fin,tipo):
-        self.evento.append((inicio,fin,tipo))
+    def cargarEvento(self,inicio,duracion,tipo):
+        self.evento.append((inicio,duracion,tipo))
         pass
-    
     def cargarTamano(self,ini,fini):
         self.inicioP=ini 
         self.finP=fini  
-
-
-        
-
 
     def cargarProceso(self, nombre, arribo, duracion, tamano,cantidadProcesos):
         try:
@@ -76,4 +72,3 @@ class Proceso:
         except ValueError as e:
             print("Error al cargar el proceso:", e)
             return None
-
